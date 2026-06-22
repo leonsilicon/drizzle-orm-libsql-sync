@@ -1,16 +1,25 @@
 {
   "name": "drizzle-orm-libsql-sync",
   "version": "0.0.0",
-  "description": "A starter for creating a TypeScript package.",
-  "homepage": "https://github.com/author/library#readme",
+  "description": "A synchronous Drizzle ORM driver for libsql, backed by the libsql Database (prepare/exec) and drizzle v1 modern relations.",
+  "keywords": [
+    "drizzle",
+    "drizzle-orm",
+    "libsql",
+    "sqlite",
+    "sync",
+    "synchronous",
+    "turso"
+  ],
+  "homepage": "https://github.com/leonsilicon/drizzle-orm-libsql-sync#readme",
   "bugs": {
-    "url": "https://github.com/author/library/issues"
+    "url": "https://github.com/leonsilicon/drizzle-orm-libsql-sync/issues"
   },
   "license": "MIT",
-  "author": "Author Name <author.name@mail.com>",
+  "author": "Leon Si <leon@leonsilicon.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/author/library.git"
+    "url": "git+https://github.com/leonsilicon/drizzle-orm-libsql-sync.git"
   },
   "files": [
     "dist"
@@ -18,6 +27,10 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.mjs",
+    "./client": "./dist/client.mjs",
+    "./driver": "./dist/driver.mjs",
+    "./migrator": "./dist/migrator.mjs",
+    "./session": "./dist/session.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -35,9 +48,15 @@
     "@types/node": "^25.6.2",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "bumpp": "^11.1.0",
+    "drizzle-orm": "1.0.0-rc.4-5d5b77c",
+    "libsql": "^0.5.29",
     "typescript": "^6.0.3",
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
     "vite-plus": "latest"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "^1.0.0-rc.4",
+    "libsql": "^0.5.0"
   },
   "overrides": {
     "vite": "npm:@voidzero-dev/vite-plus-core@latest",
