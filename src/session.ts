@@ -220,10 +220,13 @@ export class LibsqlSyncSession<
   constructor(
     private client: DrizzleSyncSQLiteClient,
     dialect: SQLiteDialect,
-    // Kept as plain PARAMETERS, not `private` fields: rc.4 no longer threads either value through
-    // the session (the base owns `relations`, and `schema` is gone entirely), so declaring them as
-    // members left them provably unread. The ctor signature is public API, so the positions stay.
-    relations: TRelations,
+    // `relations` MUST stay a stored field. rc.4's base keeps its own copy PRIVATE, so a subclass
+    // cannot read it — `Reflect.get(this, "relations")` returns undefined, and the transaction
+    // constructed below then receives `undefined` relations, which blows up downstream as
+    // `Object.entries requires that input parameter not be null or undefined`. Keep our own
+    // reference and read `this.localRelations` instead of reflecting into the base.
+    private localRelations: TRelations,
+    // `schema` is unused under rc.4 (the concept is gone) but the ctor position is public API.
     schema: V1.RelationalSchemaConfig<TSchema> | undefined,
     private options: LibsqlSyncSessionOptions = {},
   ) {
@@ -234,6 +237,11 @@ export class LibsqlSyncSession<
 
   // rc.4 reshaped this abstract method: the old `fields: SelectedFieldsOrdered` slot became
   // `mode: "arrays" | "objects" | "raw"` plus `prepare: boolean`, and `executeMethod` is optional.
+  /** Relations captured at construction; the rc.4 base keeps its own copy private. */
+  getLocalRelations(): TRelations {
+    return this.localRelations;
+  }
+
   override prepareQuery<T extends Omit<PreparedQueryConfig, "run">>(
     query: Query,
     _mode: "arrays" | "objects" | "raw",
@@ -296,7 +304,7 @@ export class LibsqlSyncSession<
       "sync",
       dialect,
       this,
-      Reflect.get(this, "relations") as TRelations,
+      this.localRelations,
     );
     this.run(sql.raw(`begin${config.behavior ? " " + config.behavior : ""}`));
     try {
@@ -336,7 +344,9 @@ export class LibsqlSyncTransaction<
       "sync",
       dialect,
       sessionValue,
-      Reflect.get(this, "relations") as TRelations,
+      // Read relations off the SESSION (which stores them as `localRelations`), not off `this`:
+      // the transaction class has no such field, and rc.4 keeps the base's copy private.
+      sessionValue.getLocalRelations(),
       (Reflect.get(this, "nestedIndex") as number) + 1,
     );
     sessionValue.run(sql.raw(`savepoint ${savepointName}`));

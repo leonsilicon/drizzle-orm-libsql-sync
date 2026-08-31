@@ -1,6 +1,6 @@
 {
   "name": "drizzle-orm-libsql-sync",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A synchronous Drizzle ORM driver for libsql, backed by the libsql Database (prepare/exec) and drizzle v1 modern relations.",
   "keywords": [
     "drizzle",
