@@ -19,7 +19,10 @@ import {
   type Logger,
 } from "drizzle-orm";
 import * as V1 from "drizzle-orm/_relations";
-import { BaseSQLiteDatabase, SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
+// drizzle-orm 1.0.0-rc.4 removed `BaseSQLiteDatabase` and the sync/async dialect split. The
+// remaining `SQLiteAsyncDatabase` is parameterised by its result kind, so a SYNC driver uses the
+// same class with `"sync"`; `SQLiteDialect` is now the only dialect.
+import { SQLiteAsyncDatabase, SQLiteDialect } from "drizzle-orm/sqlite-core";
 import { toDrizzleSyncSQLiteClient } from "./client.ts";
 import { LibsqlSyncSession, type LibsqlSyncRunResult } from "./session.ts";
 
@@ -46,7 +49,9 @@ export type LibsqlSyncDrizzleConfig<
 export class LibsqlSyncDatabase<
   TSchema extends Record<string, unknown> = Record<string, never>,
   TRelations extends AnyRelations = EmptyRelations,
-> extends BaseSQLiteDatabase<"sync", LibsqlSyncRunResult, TSchema, TRelations> {
+  // rc.4 dropped the `TSchema` generic from the database base class — relational typing now hangs
+  // off `TRelations` alone. `TSchema` stays on THIS class because the public API is keyed by it.
+> extends SQLiteAsyncDatabase<"sync", LibsqlSyncRunResult, TRelations> {
   static override readonly [entityKind]: string = "LibsqlSyncDatabase";
 
   declare $client: LibsqlDatabaseInstance;
@@ -62,7 +67,7 @@ function construct<
   $client: LibsqlDatabaseInstance;
 } {
   const sqliteClient = toDrizzleSyncSQLiteClient(client);
-  const dialect = new SQLiteSyncDialect();
+  const dialect = new SQLiteDialect();
 
   let logger: Logger | undefined;
   if (drizzleConfig.logger === true) {
@@ -101,8 +106,8 @@ function construct<
     "sync",
     dialect,
     session,
+    // rc.4 removed the `schema` ctor parameter (next slot is `forbidJsonb: boolean`).
     relations,
-    schema,
   );
   db.$client = sqliteClient;
   return db as LibsqlSyncDatabase<TSchema, TRelations> & {

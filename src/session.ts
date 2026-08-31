@@ -26,12 +26,15 @@ import {
 } from "drizzle-orm";
 import * as drizzleRuntime from "drizzle-orm";
 import type { WithCacheConfig } from "drizzle-orm/cache/core/types";
+// rc.4 moved the session/transaction/prepared-query classes into the `async/` namespace and made
+// them result-kind-parameterised, so the SYNC driver uses the same classes with `"sync"`. The
+// sync/async dialect pair collapsed into a single `SQLiteDialect`.
 import {
-  SQLitePreparedQuery,
-  SQLiteSession,
-  SQLiteTransaction,
+  SQLiteAsyncPreparedQuery,
+  SQLiteAsyncSession,
+  SQLiteAsyncTransaction,
   type PreparedQueryConfig as PreparedQueryConfigBase,
-  type SQLiteSyncDialect,
+  type SQLiteDialect,
   type SQLiteExecuteMethod,
   type SQLiteTransactionConfig,
   type SelectedFieldsOrdered,
@@ -123,7 +126,7 @@ function isRecordBooleanMap(value: unknown): value is Record<string, boolean> | 
   return Object.values(value).every((entry) => typeof entry === "boolean");
 }
 
-function isSQLiteSyncDialect(value: unknown): value is SQLiteSyncDialect {
+function isSQLiteSyncDialect(value: unknown): value is SQLiteDialect {
   return isAnyObject(value) && "sqlToQuery" in value;
 }
 
@@ -132,7 +135,7 @@ interface PreparedQueryInternals {
 }
 
 function getPreparedQueryInternals(
-  instance: SQLitePreparedQuery<PreparedQueryConfigBase>,
+  instance: SQLiteAsyncPreparedQuery<PreparedQueryConfigBase & { type: "sync" }>,
 ): PreparedQueryInternals {
   // NOTE: drizzle's base `queryWithCache` is `async`, so it always returns a
   // Promise — unusable from a synchronous driver. This driver deliberately does
@@ -145,7 +148,7 @@ function getPreparedQueryInternals(
   return { joinsNotNullableMap };
 }
 
-function getSQLiteSyncDialect(instance: object): SQLiteSyncDialect {
+function getSQLiteSyncDialect(instance: object): SQLiteDialect {
   const dialect = Reflect.get(instance, "dialect");
   if (!isSQLiteSyncDialect(dialect)) {
     throw new TypeError("Missing SQLite sync dialect");
@@ -208,26 +211,34 @@ export class LibsqlSyncSession<
   TFullSchema extends Record<string, unknown>,
   TRelations extends AnyRelations,
   TSchema extends V1.TablesRelationalConfig,
-> extends SQLiteSession<"sync", LibsqlSyncRunResult, TFullSchema, TRelations, TSchema> {
+  // rc.4: <TResultKind, TRunResult, TRelations> — `TFullSchema`/`TSchema` generics removed.
+> extends SQLiteAsyncSession<"sync", LibsqlSyncRunResult, TRelations> {
   static override readonly [entityKind]: string = "LibsqlSyncSession";
 
   private logger: Logger;
 
   constructor(
     private client: DrizzleSyncSQLiteClient,
-    dialect: SQLiteSyncDialect,
-    private relations: TRelations,
-    private schema: V1.RelationalSchemaConfig<TSchema> | undefined,
+    dialect: SQLiteDialect,
+    // Kept as plain PARAMETERS, not `private` fields: rc.4 no longer threads either value through
+    // the session (the base owns `relations`, and `schema` is gone entirely), so declaring them as
+    // members left them provably unread. The ctor signature is public API, so the positions stay.
+    relations: TRelations,
+    schema: V1.RelationalSchemaConfig<TSchema> | undefined,
     private options: LibsqlSyncSessionOptions = {},
   ) {
-    super(dialect);
+    // rc.4 added the `resultKind` ctor argument.
+    super(dialect, "sync");
     this.logger = options.logger ?? new NoopLogger();
   }
 
+  // rc.4 reshaped this abstract method: the old `fields: SelectedFieldsOrdered` slot became
+  // `mode: "arrays" | "objects" | "raw"` plus `prepare: boolean`, and `executeMethod` is optional.
   override prepareQuery<T extends Omit<PreparedQueryConfig, "run">>(
     query: Query,
-    fields: SelectedFieldsOrdered | undefined,
-    executeMethod: SQLiteExecuteMethod,
+    _mode: "arrays" | "objects" | "raw",
+    _prepare: boolean,
+    executeMethod?: SQLiteExecuteMethod,
     customResultMapper?: (
       rows: unknown[][],
       mapColumnValue?: (value: unknown) => unknown,
@@ -244,14 +255,15 @@ export class LibsqlSyncSession<
       query,
       this.logger,
       queryMetadata,
-      fields,
-      executeMethod,
+      undefined,
+      executeMethod ?? "all",
       this.options.useJitMappers,
       customResultMapper,
     );
   }
 
-  override prepareRelationalQuery<T extends Omit<PreparedQueryConfig, "run">>(
+  // NOT `override`: rc.4's session no longer declares `prepareRelationalQuery`.
+  prepareRelationalQuery<T extends Omit<PreparedQueryConfig, "run">>(
     query: Query,
     fields: SelectedFieldsOrdered | undefined,
     executeMethod: SQLiteExecuteMethod,
@@ -266,8 +278,8 @@ export class LibsqlSyncSession<
       query,
       this.logger,
       undefined,
-      fields,
-      executeMethod,
+      undefined,
+      executeMethod ?? "all",
       this.options.useJitMappers,
       customResultMapper,
       true,
@@ -284,8 +296,7 @@ export class LibsqlSyncSession<
       "sync",
       dialect,
       this,
-      this.relations,
-      this.schema,
+      Reflect.get(this, "relations") as TRelations,
     );
     this.run(sql.raw(`begin${config.behavior ? " " + config.behavior : ""}`));
     try {
@@ -303,7 +314,8 @@ export class LibsqlSyncTransaction<
   TFullSchema extends Record<string, unknown>,
   TRelations extends AnyRelations,
   TSchema extends V1.TablesRelationalConfig,
-> extends SQLiteTransaction<"sync", LibsqlSyncRunResult, TFullSchema, TRelations, TSchema> {
+  // Same rc.4 collapse as the session above.
+> extends SQLiteAsyncTransaction<"sync", LibsqlSyncRunResult, TRelations> {
   static override readonly [entityKind]: string = "LibsqlSyncTransaction";
 
   override transaction<T>(
@@ -319,14 +331,13 @@ export class LibsqlSyncTransaction<
     if (!isLibsqlSyncSessionFor<TFullSchema, TRelations, TSchema>(sessionValue)) {
       throw new TypeError("Expected LibsqlSyncSession");
     }
-    const savepointName = `sp${this.nestedIndex}`;
+    const savepointName = `sp${Reflect.get(this, "nestedIndex") as number}`;
     const tx = new LibsqlSyncTransaction<TFullSchema, TRelations, TSchema>(
       "sync",
       dialect,
       sessionValue,
-      this.relations,
-      this.schema,
-      this.nestedIndex + 1,
+      Reflect.get(this, "relations") as TRelations,
+      (Reflect.get(this, "nestedIndex") as number) + 1,
     );
     sessionValue.run(sql.raw(`savepoint ${savepointName}`));
     try {
@@ -345,7 +356,7 @@ export class LibsqlSyncTransaction<
 export class LibsqlSyncPreparedQuery<
   T extends PreparedQueryConfig = PreparedQueryConfig,
   TIsRqbV2 extends boolean = false,
-> extends SQLitePreparedQuery<{
+> extends SQLiteAsyncPreparedQuery<{
   all: T["all"];
   execute: T["execute"];
   get: T["get"];
@@ -361,7 +372,9 @@ export class LibsqlSyncPreparedQuery<
   constructor(
     private client: DrizzleSyncSQLiteClient,
     query: Query,
-    private logger: Logger,
+    // NOT `private`: rc.4's base declares `logger` PROTECTED, and narrowing it here made this class
+    // structurally incompatible with its own base.
+    protected override logger: Logger,
     queryMetadata:
       | { tables: string[]; type: "select" | "update" | "delete" | "insert" }
       | undefined,
@@ -374,7 +387,36 @@ export class LibsqlSyncPreparedQuery<
     private isRqbV2Query?: TIsRqbV2,
     private rqbConfig?: RelationalQueryMapperConfig,
   ) {
-    super("sync", executeMethod, query, undefined, queryMetadata, undefined);
+    // rc.4 widened this ctor to
+    //   (resultKind, executeMethod, executors, query, mapper, mode, logger, cache, queryMetadata,
+    //    cacheConfig)
+    // This class overrides run/all/get/values outright, so the base `executors` path is unreachable
+    // — pass throwing stubs so a future fall-through fails loudly instead of silently no-op'ing.
+    super(
+      "sync",
+      executeMethod ?? "all",
+      {
+        all: () => {
+          throw new Error("LibsqlSyncPreparedQuery overrides all()");
+        },
+        get: () => {
+          throw new Error("LibsqlSyncPreparedQuery overrides get()");
+        },
+        run: () => {
+          throw new Error("LibsqlSyncPreparedQuery overrides run()");
+        },
+        values: () => {
+          throw new Error("LibsqlSyncPreparedQuery overrides values()");
+        },
+      } as never,
+      query,
+      undefined,
+      "objects",
+      logger,
+      undefined,
+      queryMetadata,
+      undefined,
+    );
   }
 
   override run(placeholderValues?: Record<string, unknown>): LibsqlSyncRunResult {
